@@ -271,7 +271,7 @@ class NBADataScraper:
 
     def get_play_by_play(self, game_id: str) -> list[dict]:
         """
-        Get play-by-play data for a game.
+        Get play-by-play data for a game using CDN endpoint.
 
         Args:
             game_id: NBA game ID.
@@ -279,80 +279,137 @@ class NBADataScraper:
         Returns:
             List of play dictionaries with event IDs.
         """
-        params = {
-            'GameID': game_id,
-            'StartPeriod': 1,
-            'EndPeriod': 10,
-        }
-
-        data = self._make_request('playbyplayv2', params)
-        if not data:
-            print(f"Error: No data returned from playbyplayv2 for game {game_id}")
-            return []
+        # Use CDN endpoint which is more reliable
+        cdn_url = f"https://cdn.nba.com/static/json/liveData/playbyplay/playbyplay_{game_id}.json"
 
         try:
-            pbp_rs = self._get_result_set(data, 'PlayByPlay')
-            if not pbp_rs:
-                print(f"Error: No PlayByPlay in response for game {game_id}")
+            cdn_headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'application/json',
+                'Referer': 'https://www.nba.com/',
+            }
+            response = requests.get(cdn_url, headers=cdn_headers, timeout=60)
+            response.raise_for_status()
+            data = response.json()
+
+            actions = data.get('game', {}).get('actions', [])
+            if not actions:
+                print(f"Error: No actions in CDN response for game {game_id}")
                 return []
 
-            plays_data = parse_nba_response(pbp_rs)
             plays = []
+            for action in actions:
+                # Parse clock time from ISO format (PT12M00.00S -> 12:00)
+                clock = action.get('clock', 'PT0M0.00S')
+                time_str = self._parse_clock_time(clock)
 
-            for play in plays_data:
+                # Map CDN action types to our event types
+                # 2pt, 3pt = made shot (type 1)
+                # block = block (type 2 with BLOCK)
+                action_type = action.get('actionType', '')
+                shot_result = action.get('shotResult', '')
+
+                event_type = 0
+                if action_type in ('2pt', '3pt') and shot_result == 'Made':
+                    event_type = 1  # Made shot
+                elif action_type == 'block':
+                    event_type = 2  # Block (treated as missed shot with block)
+
                 plays.append({
-                    "event_id": play.get("EVENTNUM"),
-                    "event_type": play.get("EVENTMSGTYPE"),
-                    "event_action": play.get("EVENTMSGACTIONTYPE"),
-                    "period": play.get("PERIOD"),
-                    "pctimestring": play.get("PCTIMESTRING"),
-                    "description": play.get("HOMEDESCRIPTION") or play.get("VISITORDESCRIPTION") or play.get("NEUTRALDESCRIPTION", ""),
-                    "player1_id": play.get("PLAYER1_ID"),
-                    "player1_name": play.get("PLAYER1_NAME"),
-                    "player2_id": play.get("PLAYER2_ID"),
-                    "player2_name": play.get("PLAYER2_NAME"),
+                    "event_id": action.get("actionNumber"),
+                    "event_type": event_type,
+                    "event_action": action.get("subType", ""),
+                    "period": action.get("period"),
+                    "pctimestring": time_str,
+                    "description": action.get("description", ""),
+                    "player1_id": action.get("personId"),
+                    "player1_name": action.get("playerNameI", ""),
+                    "player2_id": action.get("assistPersonId"),
+                    "player2_name": action.get("assistPlayerNameInitial", ""),
                 })
 
             return plays
         except Exception as e:
-            print(f"Error fetching play-by-play for game {game_id}: {e}")
+            print(f"Error fetching play-by-play from CDN for game {game_id}: {e}")
             return []
 
-    def get_video_url(self, game_id: str, event_id: int) -> Optional[str]:
+    def _parse_clock_time(self, clock: str) -> str:
+        """
+        Parse ISO clock format to MM:SS.
+
+        Args:
+            clock: Time string in format PT12M30.00S
+
+        Returns:
+            Time string in format 12:30
+        """
+        try:
+            # Remove PT prefix and S suffix
+            clock = clock.replace('PT', '').replace('S', '')
+            # Split by M
+            parts = clock.split('M')
+            minutes = int(parts[0]) if parts[0] else 0
+            seconds = int(float(parts[1])) if len(parts) > 1 and parts[1] else 0
+            return f"{minutes}:{seconds:02d}"
+        except Exception:
+            return "0:00"
+
+    def get_video_url(self, game_id: str, event_id: int, max_retries: int = 3) -> Optional[str]:
         """
         Get video URL for a specific play event.
 
         Args:
             game_id: NBA game ID.
             event_id: Play event ID.
+            max_retries: Maximum retry attempts.
 
         Returns:
             Video URL string or None if not available.
         """
+        url = f"{self.BASE_URL}/videoeventsasset"
         params = {
             'GameID': game_id,
             'GameEventID': str(event_id),
         }
 
-        data = self._make_request('videoeventsasset', params)
-        if not data:
-            return None
+        for attempt in range(max_retries):
+            try:
+                if attempt > 0:
+                    wait_time = 3 * (attempt + 1)  # 6, 9 seconds for retries
+                    print(f"    Retry {attempt}/{max_retries} for video in {wait_time}s...")
+                    time.sleep(wait_time)
 
-        try:
-            # The video URL is nested in resultSets.Meta.videoUrls
-            result_sets = data.get("resultSets", {})
-            if isinstance(result_sets, dict):
-                meta = result_sets.get("Meta", {})
-                video_urls = meta.get("videoUrls", [])
-                if video_urls:
-                    # Prefer large URL (lurl), fallback to medium (murl) or small (surl)
-                    url = video_urls[0].get("lurl") or video_urls[0].get("murl") or video_urls[0].get("surl")
-                    return url
+                response = self.session.get(url, params=params, timeout=60)
+                response.raise_for_status()
+                data = response.json()
 
-            return None
-        except Exception as e:
-            print(f"Error fetching video for event {event_id}: {e}")
-            return None
+                # The video URL is nested in resultSets.Meta.videoUrls
+                result_sets = data.get("resultSets", {})
+                if isinstance(result_sets, dict):
+                    meta = result_sets.get("Meta", {})
+                    video_urls = meta.get("videoUrls", [])
+                    if video_urls:
+                        # Prefer large URL (lurl), fallback to medium (murl) or small (surl)
+                        video_url = video_urls[0].get("lurl") or video_urls[0].get("murl") or video_urls[0].get("surl")
+                        return video_url
+
+                return None
+
+            except requests.exceptions.Timeout:
+                print(f"    Timeout fetching video (attempt {attempt + 1}/{max_retries})")
+                if attempt == max_retries - 1:
+                    return None
+            except requests.exceptions.ConnectionError as e:
+                print(f"    Connection error (attempt {attempt + 1}/{max_retries}): {e}")
+                if attempt == max_retries - 1:
+                    return None
+                # Wait longer on connection errors (likely rate limiting)
+                time.sleep(5 * (attempt + 1))
+            except Exception as e:
+                print(f"    Error fetching video for event {event_id}: {e}")
+                return None
+
+        return None
 
     def get_player_events(self, game_id: str, player_id: int, event_types: list[str] = None) -> list[dict]:
         """
@@ -537,8 +594,8 @@ class NBADataScraper:
                 stats["failed"] += 1
                 print(f"    No video available for event {event_id}")
 
-            # Rate limiting to avoid API throttling
-            time.sleep(0.5)
+            # Rate limiting to avoid API throttling (2 seconds between requests)
+            time.sleep(2)
 
         return stats
 

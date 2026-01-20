@@ -9,17 +9,29 @@ import argparse
 import json
 import time
 import os
+import sys
 from datetime import datetime, timedelta
 from pytz import timezone
 from dotenv import load_dotenv
+
+# Fix Windows console encoding for Unicode characters
+if sys.platform == 'win32':
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+
+
+def safe_print(text: str) -> None:
+    """Print text with safe Unicode handling for Windows console."""
+    try:
+        print(text)
+    except UnicodeEncodeError:
+        print(text.encode('ascii', 'replace').decode('ascii'))
 
 from src.data.nba_api_scraper import NBADataScraper, get_highlight_players
 from src import config
 
 from src.video.highlights_maker import Highlight_Make
 from src.video.thumbnail_maker import make_thumbnail
-# YouTube upload disabled for testing
-# from src.video.upload_video import YouTubeUploader
+from src.video.upload_video import YouTubeUploader
 
 
 def setup_directories(build_path: str, game_date: str) -> None:
@@ -57,6 +69,7 @@ def process_player(
     assets_path: str,
     build_path: str,
     hm: Highlight_Make,
+    uploader: YouTubeUploader,
 ) -> None:
     """Process a single player: download clips, make highlight video, upload to YouTube."""
 
@@ -117,18 +130,18 @@ def process_player(
         build_path=build_path,
     )
 
-    # YouTube upload disabled for testing
-    # print("\nUploading to YouTube...")
+    # Upload to YouTube
+    print("\nUploading to YouTube...")
     yt_title = f"[NBA] {player_name} Highlights | {game_info['away_team']} @ {game_info['home_team']} ({game_date_readable}) | NBA Regular Season"
 
-    # uploader.upload_video(
-    #     player_name=player_name,
-    #     away_team=game_info["away_team"],
-    #     home_team=game_info["home_team"],
-    #     title=yt_title,
-    #     game_date=game_date,
-    #     build_path=build_path,
-    # )
+    uploader.upload_video(
+        player_name=player_name,
+        away_team=game_info["away_team"],
+        home_team=game_info["home_team"],
+        title=yt_title,
+        game_date=game_date,
+        build_path=build_path,
+    )
 
     end_time = time.time()
 
@@ -184,10 +197,9 @@ def main():
     # Initialize components
     scraper = NBADataScraper(game_date=today_date)
     hm = Highlight_Make()
-    # YouTube upload disabled for testing
-    # uploader = YouTubeUploader()
-    # print("Authenticating with YouTube API...")
-    # uploader.authenticate()
+    uploader = YouTubeUploader()
+    print("Authenticating with YouTube API...")
+    uploader.authenticate()
 
     # Get today's games
     print("\nFetching today's games...")
@@ -208,6 +220,12 @@ def main():
         print(f"Game: {game['away_team']} @ {game['home_team']}")
         print(f"Game ID: {game['game_id']} | Status: {game.get('status', 'Unknown')}")
         print(f"{'='*60}")
+
+        # Skip games that haven't finished yet
+        game_status = game.get('status', '').lower()
+        if 'final' not in game_status:
+            print(f"Skipping - game not finished yet (status: {game.get('status', 'Unknown')})")
+            continue
 
         # Get players who qualify for highlights
         print("\nFetching box score...")
@@ -242,6 +260,7 @@ def main():
                     assets_path=assets_path,
                     build_path=build_path,
                     hm=hm,
+                    uploader=uploader,
                 )
                 mark_player_completed(build_path, game_date, player["player_name"])
             except Exception as e:
