@@ -22,9 +22,6 @@ python src/manual.py
 ## Required Environment Variables (.env file)
 
 ```
-CHROME_PATH=C:\Program Files\Google\Chrome\Application\chrome.exe
-USER_PROFILE_PATH=C:\Users\{username}\AppData\Local\Google\Chrome\User Data
-PORT=9222
 YOUTUBE_CHANNEL_ID=your_channel_id_here
 ```
 
