@@ -17,6 +17,11 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload
 
+from src.logger import get_logger, log_exception
+
+# Initialize logger for this module
+logger = get_logger("upload")
+
 
 # OAuth 2.0 scopes required for uploading videos and thumbnails
 SCOPES = [
@@ -99,7 +104,7 @@ class YouTubeUploader:
                 pickle.dump(credentials, token)
 
         self.youtube = build("youtube", "v3", credentials=credentials)
-        print("YouTube API authenticated successfully.")
+        logger.info("YouTube API authenticated successfully.")
 
     def upload_video(
         self,
@@ -190,17 +195,17 @@ class YouTubeUploader:
             media_body=media,
         )
 
-        print(f"Uploading video: {title}")
+        logger.info(f"Uploading video: {title}")
         video_id = self._resumable_upload(request)
 
         if video_id:
-            print(f"Video uploaded successfully. ID: {video_id}")
+            logger.info(f"Video uploaded successfully. ID: {video_id}")
 
             # Upload thumbnail if it exists
             if os.path.exists(thumbnail_path):
                 self._upload_thumbnail(video_id, thumbnail_path)
 
-            print(f"Video URL: https://www.youtube.com/watch?v={video_id}")
+            logger.info(f"Video URL: https://www.youtube.com/watch?v={video_id}")
 
         return video_id
 
@@ -223,7 +228,7 @@ class YouTubeUploader:
                 status, response = request.next_chunk()
                 if status:
                     progress = int(status.progress() * 100)
-                    print(f"  Upload progress: {progress}%")
+                    logger.debug(f"Upload progress: {progress}%")
             except HttpError as e:
                 if e.resp.status in RETRIABLE_STATUS_CODES:
                     error = f"HTTP error {e.resp.status}: {e.content}"
@@ -235,11 +240,11 @@ class YouTubeUploader:
             if error:
                 retry += 1
                 if retry > MAX_RETRIES:
-                    print(f"Upload failed after {MAX_RETRIES} retries.")
+                    logger.error(f"Upload failed after {MAX_RETRIES} retries.")
                     return None
 
                 sleep_seconds = random.random() * (2 ** retry)
-                print(f"  Retry {retry}/{MAX_RETRIES} after {sleep_seconds:.1f}s: {error}")
+                logger.warning(f"Retry {retry}/{MAX_RETRIES} after {sleep_seconds:.1f}s: {error}")
                 time.sleep(sleep_seconds)
                 error = None
 
@@ -257,21 +262,20 @@ class YouTubeUploader:
             True if successful, False otherwise.
         """
         try:
-            print(f"Uploading thumbnail...")
+            logger.info("Uploading thumbnail...")
             media = MediaFileUpload(thumbnail_path, mimetype="image/png")
             self.youtube.thumbnails().set(
                 videoId=video_id,
                 media_body=media,
             ).execute()
-            print("Thumbnail uploaded successfully.")
+            logger.info("Thumbnail uploaded successfully.")
             return True
         except HttpError as e:
             # Custom thumbnails require channel verification
             if e.resp.status == 403:
-                print("Warning: Custom thumbnails require YouTube channel verification.")
-                print("  Visit: https://www.youtube.com/verify")
+                logger.warning("Custom thumbnails require YouTube channel verification. Visit: https://www.youtube.com/verify")
             else:
-                print(f"Failed to upload thumbnail: {e}")
+                logger.error(f"Failed to upload thumbnail: {e}")
             return False
 
 

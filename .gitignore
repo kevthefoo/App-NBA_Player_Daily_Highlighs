@@ -23,3 +23,7 @@ token.pickle
 
 # Video files
 *.mp4
+
+# Log files
+/logs/
+*.log
