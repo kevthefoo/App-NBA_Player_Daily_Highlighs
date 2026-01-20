@@ -5,10 +5,11 @@ Fetches NBA game data via API, downloads player highlight clips,
 assembles highlight reels, generates thumbnails, and uploads to YouTube.
 """
 
+import argparse
 import json
 import time
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from pytz import timezone
 from dotenv import load_dotenv
 
@@ -17,7 +18,8 @@ from src import config
 
 from src.video.highlights_maker import Highlight_Make
 from src.video.thumbnail_maker import make_thumbnail
-from src.video.upload_video import YouTubeUploader
+# YouTube upload disabled for testing
+# from src.video.upload_video import YouTubeUploader
 
 
 def setup_directories(build_path: str, game_date: str) -> None:
@@ -54,7 +56,6 @@ def process_player(
     game_date_readable: str,
     assets_path: str,
     build_path: str,
-    uploader: YouTubeUploader,
     hm: Highlight_Make,
 ) -> None:
     """Process a single player: download clips, make highlight video, upload to YouTube."""
@@ -116,18 +117,18 @@ def process_player(
         build_path=build_path,
     )
 
-    # Upload to YouTube
-    print("\nUploading to YouTube...")
+    # YouTube upload disabled for testing
+    # print("\nUploading to YouTube...")
     yt_title = f"[NBA] {player_name} Highlights | {game_info['away_team']} @ {game_info['home_team']} ({game_date_readable}) | NBA Regular Season"
 
-    uploader.upload_video(
-        player_name=player_name,
-        away_team=game_info["away_team"],
-        home_team=game_info["home_team"],
-        title=yt_title,
-        game_date=game_date,
-        build_path=build_path,
-    )
+    # uploader.upload_video(
+    #     player_name=player_name,
+    #     away_team=game_info["away_team"],
+    #     home_team=game_info["home_team"],
+    #     title=yt_title,
+    #     game_date=game_date,
+    #     build_path=build_path,
+    # )
 
     end_time = time.time()
 
@@ -148,17 +149,30 @@ def main():
     """Main entry point."""
     load_dotenv()
 
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(description="NBA Player Daily Highlights Automation")
+    parser.add_argument(
+        "--date",
+        type=str,
+        help="Game date in YYYY-MM-DD format (default: yesterday)",
+    )
+    args = parser.parse_args()
+
     # Initialize paths
     basepath = os.path.dirname(__file__)
     assets_path = os.path.abspath(os.path.join(basepath, "assets"))
     build_path = os.path.abspath(os.path.join(basepath, "build"))
 
-    # Get today's date in EST
+    # Get game date (default to yesterday in EST)
     tz = timezone("EST")
-    today = datetime.now(tz)
-    today_date = today.strftime("%Y-%m-%d")
-    game_date = today.strftime("%m%d%Y")
-    game_date_readable = today.strftime("%m/%d/%Y")
+    if args.date:
+        target_date = datetime.strptime(args.date, "%Y-%m-%d").replace(tzinfo=tz)
+    else:
+        target_date = datetime.now(tz) - timedelta(days=1)
+
+    today_date = target_date.strftime("%Y-%m-%d")
+    game_date = target_date.strftime("%m%d%Y")
+    game_date_readable = target_date.strftime("%m/%d/%Y")
 
     print(f"NBA Player Daily Highlights")
     print(f"Date: {game_date_readable}")
@@ -170,11 +184,10 @@ def main():
     # Initialize components
     scraper = NBADataScraper(game_date=today_date)
     hm = Highlight_Make()
-    uploader = YouTubeUploader()
-
-    # Authenticate with YouTube API upfront
-    print("Authenticating with YouTube API...")
-    uploader.authenticate()
+    # YouTube upload disabled for testing
+    # uploader = YouTubeUploader()
+    # print("Authenticating with YouTube API...")
+    # uploader.authenticate()
 
     # Get today's games
     print("\nFetching today's games...")
@@ -193,7 +206,7 @@ def main():
     for game in games:
         print(f"\n{'='*60}")
         print(f"Game: {game['away_team']} @ {game['home_team']}")
-        print(f"Game ID: {game['game_id']}")
+        print(f"Game ID: {game['game_id']} | Status: {game.get('status', 'Unknown')}")
         print(f"{'='*60}")
 
         # Get players who qualify for highlights
@@ -228,7 +241,6 @@ def main():
                     game_date_readable=game_date_readable,
                     assets_path=assets_path,
                     build_path=build_path,
-                    uploader=uploader,
                     hm=hm,
                 )
                 mark_player_completed(build_path, game_date, player["player_name"])

@@ -1,25 +1,70 @@
 """
-NBA API-based data scraper - replaces Selenium-based scraping.
-Uses nba_api package to fetch game data, player stats, and video URLs.
+NBA API-based data scraper - uses direct HTTP requests to NBA stats endpoints.
+Replaces nba_api library with direct requests for more control and reliability.
 """
 
+import json
 import os
 import time
 import requests
 from datetime import datetime
 from typing import Optional
 
-from nba_api.stats.endpoints import (
-    ScoreboardV2,
-    BoxScoreTraditionalV2,
-    PlayByPlayV2,
-    VideoDetailsAsset,
-)
-from nba_api.stats.static import players, teams
+
+# Team ID to name/abbreviation mapping
+TEAM_ID_MAP = {
+    1610612737: {"abbreviation": "ATL", "full_name": "Atlanta Hawks"},
+    1610612738: {"abbreviation": "BOS", "full_name": "Boston Celtics"},
+    1610612751: {"abbreviation": "BKN", "full_name": "Brooklyn Nets"},
+    1610612766: {"abbreviation": "CHA", "full_name": "Charlotte Hornets"},
+    1610612741: {"abbreviation": "CHI", "full_name": "Chicago Bulls"},
+    1610612739: {"abbreviation": "CLE", "full_name": "Cleveland Cavaliers"},
+    1610612742: {"abbreviation": "DAL", "full_name": "Dallas Mavericks"},
+    1610612743: {"abbreviation": "DEN", "full_name": "Denver Nuggets"},
+    1610612765: {"abbreviation": "DET", "full_name": "Detroit Pistons"},
+    1610612744: {"abbreviation": "GSW", "full_name": "Golden State Warriors"},
+    1610612745: {"abbreviation": "HOU", "full_name": "Houston Rockets"},
+    1610612754: {"abbreviation": "IND", "full_name": "Indiana Pacers"},
+    1610612746: {"abbreviation": "LAC", "full_name": "Los Angeles Clippers"},
+    1610612747: {"abbreviation": "LAL", "full_name": "Los Angeles Lakers"},
+    1610612763: {"abbreviation": "MEM", "full_name": "Memphis Grizzlies"},
+    1610612748: {"abbreviation": "MIA", "full_name": "Miami Heat"},
+    1610612749: {"abbreviation": "MIL", "full_name": "Milwaukee Bucks"},
+    1610612750: {"abbreviation": "MIN", "full_name": "Minnesota Timberwolves"},
+    1610612740: {"abbreviation": "NOP", "full_name": "New Orleans Pelicans"},
+    1610612752: {"abbreviation": "NYK", "full_name": "New York Knicks"},
+    1610612760: {"abbreviation": "OKC", "full_name": "Oklahoma City Thunder"},
+    1610612753: {"abbreviation": "ORL", "full_name": "Orlando Magic"},
+    1610612755: {"abbreviation": "PHI", "full_name": "Philadelphia 76ers"},
+    1610612756: {"abbreviation": "PHX", "full_name": "Phoenix Suns"},
+    1610612757: {"abbreviation": "POR", "full_name": "Portland Trail Blazers"},
+    1610612758: {"abbreviation": "SAC", "full_name": "Sacramento Kings"},
+    1610612759: {"abbreviation": "SAS", "full_name": "San Antonio Spurs"},
+    1610612761: {"abbreviation": "TOR", "full_name": "Toronto Raptors"},
+    1610612762: {"abbreviation": "UTA", "full_name": "Utah Jazz"},
+    1610612764: {"abbreviation": "WAS", "full_name": "Washington Wizards"},
+}
+
+
+def parse_nba_response(result_set: dict) -> list[dict]:
+    """
+    Convert NBA API rowSet to list of dictionaries.
+
+    Args:
+        result_set: A result set from NBA API response containing 'headers' and 'rowSet'.
+
+    Returns:
+        List of dictionaries with header names as keys.
+    """
+    headers = result_set.get('headers', [])
+    rows = result_set.get('rowSet', [])
+    return [dict(zip(headers, row)) for row in rows]
 
 
 class NBADataScraper:
-    """Scrapes NBA data using the official stats API."""
+    """Scrapes NBA data using direct HTTP requests to stats.nba.com."""
+
+    BASE_URL = "https://stats.nba.com/stats"
 
     def __init__(self, game_date: str = None):
         """
@@ -30,10 +75,81 @@ class NBADataScraper:
         """
         self.game_date = game_date or datetime.now().strftime("%Y-%m-%d")
         self.headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Referer": "https://www.nba.com/",
-            "Origin": "https://www.nba.com",
+            'Host': 'stats.nba.com',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'application/json, text/plain, */*',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Referer': 'https://www.nba.com/',
+            'Origin': 'https://www.nba.com',
+            'Connection': 'keep-alive',
+            'Sec-Ch-Ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+            'Sec-Ch-Ua-Mobile': '?0',
+            'Sec-Ch-Ua-Platform': '"Windows"',
+            'Sec-Fetch-Dest': 'empty',
+            'Sec-Fetch-Mode': 'cors',
+            'Sec-Fetch-Site': 'same-site',
         }
+        self.session = requests.Session()
+        self.session.headers.update(self.headers)
+
+    def _make_request(self, endpoint: str, params: dict, max_retries: int = 3) -> Optional[dict]:
+        """
+        Make a request to the NBA stats API with retry logic.
+
+        Args:
+            endpoint: API endpoint name (e.g., 'scoreboardv2').
+            params: Query parameters for the request.
+            max_retries: Maximum number of retry attempts.
+
+        Returns:
+            JSON response as dictionary, or None if request failed.
+        """
+        url = f"{self.BASE_URL}/{endpoint}"
+
+        for attempt in range(max_retries):
+            try:
+                # Longer timeout and add delay between retries
+                if attempt > 0:
+                    wait_time = 2 ** attempt  # Exponential backoff: 2, 4, 8 seconds
+                    print(f"  Retry {attempt}/{max_retries} for {endpoint} in {wait_time}s...")
+                    time.sleep(wait_time)
+
+                response = self.session.get(url, params=params, timeout=60)
+                response.raise_for_status()
+                return response.json()
+            except requests.exceptions.Timeout as e:
+                print(f"Timeout for {endpoint} (attempt {attempt + 1}/{max_retries})")
+                if attempt == max_retries - 1:
+                    print(f"Request error for {endpoint}: {e}")
+                    return None
+            except requests.exceptions.RequestException as e:
+                print(f"Request error for {endpoint}: {e}")
+                return None
+            except json.JSONDecodeError as e:
+                print(f"JSON decode error for {endpoint}: {e}")
+                return None
+
+        return None
+
+    def _get_result_set(self, data: dict, name: str) -> Optional[dict]:
+        """
+        Find a result set by name in the API response.
+
+        Args:
+            data: Full API response.
+            name: Name of the result set to find.
+
+        Returns:
+            The result set dictionary, or None if not found.
+        """
+        if not data:
+            return None
+        result_sets = data.get('resultSets', [])
+        for rs in result_sets:
+            if rs.get('name') == name:
+                return rs
+        return None
 
     def get_games(self) -> list[dict]:
         """
@@ -42,15 +158,31 @@ class NBADataScraper:
         Returns:
             List of game dictionaries with game_id, home_team, away_team.
         """
-        try:
-            scoreboard = ScoreboardV2(game_date=self.game_date)
-            games_data = scoreboard.get_normalized_dict()
+        params = {
+            'DayOffset': 0,
+            'GameDate': self.game_date,
+            'LeagueID': '00',
+        }
 
+        data = self._make_request('scoreboardv2', params)
+        if not data:
+            print(f"Error: No data returned from scoreboardv2")
+            return []
+
+        try:
+            game_header = self._get_result_set(data, 'GameHeader')
+            if not game_header:
+                print(f"Error: No GameHeader in response")
+                return []
+
+            games_data = parse_nba_response(game_header)
             games = []
-            for game in games_data.get("GameHeader", []):
+
+            for game in games_data:
                 game_id = game.get("GAME_ID")
                 home_team_id = game.get("HOME_TEAM_ID")
                 away_team_id = game.get("VISITOR_TEAM_ID")
+                game_status = game.get("GAME_STATUS_TEXT", "Unknown")
 
                 # Get team names
                 home_team = self._get_team_name(home_team_id)
@@ -62,20 +194,20 @@ class NBADataScraper:
                     "away_team": away_team,
                     "home_team_id": home_team_id,
                     "away_team_id": away_team_id,
+                    "status": game_status,
                 })
 
             return games
         except Exception as e:
-            print(f"Error fetching games: {e}")
+            print(f"Error parsing games: {e}")
             return []
 
     def _get_team_name(self, team_id: int) -> str:
-        """Get team name from team ID."""
-        try:
-            team_info = teams.find_team_name_by_id(team_id)
-            return team_info.get("full_name", f"Team {team_id}") if team_info else f"Team {team_id}"
-        except Exception:
-            return f"Team {team_id}"
+        """Get team name from team ID using local mapping."""
+        team_info = TEAM_ID_MAP.get(team_id)
+        if team_info:
+            return team_info.get("full_name", f"Team {team_id}")
+        return f"Team {team_id}"
 
     def get_box_score(self, game_id: str) -> list[dict]:
         """
@@ -87,12 +219,35 @@ class NBADataScraper:
         Returns:
             List of player stat dictionaries.
         """
+        params = {
+            'GameID': game_id,
+            'StartPeriod': 1,
+            'EndPeriod': 10,
+            'StartRange': 0,
+            'EndRange': 0,
+            'RangeType': 0,
+        }
+
+        data = self._make_request('boxscoretraditionalv2', params)
+        if not data:
+            print(f"Error: No data returned from boxscoretraditionalv2 for game {game_id}")
+            return []
+
         try:
-            box_score = BoxScoreTraditionalV2(game_id=game_id)
-            data = box_score.get_normalized_dict()
+            player_stats_rs = self._get_result_set(data, 'PlayerStats')
+            if not player_stats_rs:
+                print(f"Error: No PlayerStats in response for game {game_id}")
+                return []
+
+            players_data = parse_nba_response(player_stats_rs)
+
+            # Debug output
+            print(f"    DEBUG: Box score returned {len(players_data)} players")
+            if players_data:
+                print(f"    DEBUG: First player sample: {players_data[0]}")
 
             player_stats = []
-            for player in data.get("PlayerStats", []):
+            for player in players_data:
                 stats = {
                     "player_id": player.get("PLAYER_ID"),
                     "player_name": player.get("PLAYER_NAME"),
@@ -124,12 +279,27 @@ class NBADataScraper:
         Returns:
             List of play dictionaries with event IDs.
         """
-        try:
-            pbp = PlayByPlayV2(game_id=game_id)
-            data = pbp.get_normalized_dict()
+        params = {
+            'GameID': game_id,
+            'StartPeriod': 1,
+            'EndPeriod': 10,
+        }
 
+        data = self._make_request('playbyplayv2', params)
+        if not data:
+            print(f"Error: No data returned from playbyplayv2 for game {game_id}")
+            return []
+
+        try:
+            pbp_rs = self._get_result_set(data, 'PlayByPlay')
+            if not pbp_rs:
+                print(f"Error: No PlayByPlay in response for game {game_id}")
+                return []
+
+            plays_data = parse_nba_response(pbp_rs)
             plays = []
-            for play in data.get("PlayByPlay", []):
+
+            for play in plays_data:
                 plays.append({
                     "event_id": play.get("EVENTNUM"),
                     "event_type": play.get("EVENTMSGTYPE"),
@@ -159,11 +329,17 @@ class NBADataScraper:
         Returns:
             Video URL string or None if not available.
         """
-        try:
-            video = VideoDetailsAsset(game_id=game_id, game_event_id=str(event_id))
-            data = video.get_dict()
+        params = {
+            'GameID': game_id,
+            'GameEventID': str(event_id),
+        }
 
-            # Try to get the video URL from the response
+        data = self._make_request('videoeventsasset', params)
+        if not data:
+            return None
+
+        try:
+            # The video URL is nested in resultSets.Meta.videoUrls
             result_sets = data.get("resultSets", {})
             if isinstance(result_sets, dict):
                 meta = result_sets.get("Meta", {})
@@ -207,12 +383,6 @@ class NBADataScraper:
         # 11 = Ejection
         # 12 = Start Period
         # 13 = End Period
-
-        event_type_map = {
-            "fgm": 1,  # Made shot
-            "ast": 1,  # Assist is on made shot (player2)
-            "blk": 2,  # Block is on missed shot
-        }
 
         for play in plays:
             is_player_event = False
@@ -287,7 +457,12 @@ class NBADataScraper:
             return False
 
         try:
-            response = requests.get(url, headers=self.headers, timeout=30)
+            # Use different headers for video download (videos come from CDN)
+            download_headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0',
+                'Referer': 'https://www.nba.com/',
+            }
+            response = requests.get(url, headers=download_headers, timeout=30)
             if response.status_code == 200:
                 with open(filepath, "wb") as f:
                     f.write(response.content)
@@ -394,6 +569,11 @@ def get_highlight_players(game_id: str, scraper: NBADataScraper, algorithm_func)
     """
     box_score = scraper.get_box_score(game_id)
     highlight_players = []
+
+    # Debug: print box score count
+    print(f"  DEBUG: Box score returned {len(box_score)} players")
+    if box_score:
+        print(f"  DEBUG: First player sample: {box_score[0]}")
 
     for player in box_score:
         # Skip players with no minutes

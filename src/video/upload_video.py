@@ -87,7 +87,12 @@ class YouTubeUploader:
                 flow = InstalledAppFlow.from_client_secrets_file(
                     self.client_secrets_file, SCOPES
                 )
-                credentials = flow.run_local_server(port=0)
+                # Use fixed port 8080 for redirect URI
+                credentials = flow.run_local_server(
+                    port=8080,
+                    prompt="consent",
+                    success_message="Authorization successful! You can close this tab.",
+                )
 
             # Save credentials for future runs
             with open(self.token_file, "wb") as token:
