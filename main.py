@@ -132,7 +132,7 @@ def process_player(
 
     # Upload to YouTube
     print("\nUploading to YouTube...")
-    yt_title = f"[NBA] {player_name} Highlights | {game_info['away_team']} @ {game_info['home_team']} ({game_date_readable}) | NBA Regular Season"
+    yt_title = f"NBA - {player_name} Highlights - {game_info['away_team']} vs {game_info['home_team']} - {game_date_readable}"
 
     uploader.upload_video(
         player_name=player_name,
@@ -218,12 +218,12 @@ def main():
     for game in games:
         print(f"\n{'='*60}")
         print(f"Game: {game['away_team']} @ {game['home_team']}")
-        print(f"Game ID: {game['game_id']} | Status: {game.get('status', 'Unknown')}")
+        print(f"Game ID: {game['game_id']} | Status ID: {game.get('status', 'Unknown')}")
         print(f"{'='*60}")
 
         # Skip games that haven't finished yet
-        game_status = game.get('status', '').lower()
-        if 'final' not in game_status:
+        game_status = game.get('status', '')
+        if game_status !=3:
             print(f"Skipping - game not finished yet (status: {game.get('status', 'Unknown')})")
             continue
 

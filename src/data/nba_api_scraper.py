@@ -182,7 +182,7 @@ class NBADataScraper:
                 game_id = game.get("GAME_ID")
                 home_team_id = game.get("HOME_TEAM_ID")
                 away_team_id = game.get("VISITOR_TEAM_ID")
-                game_status = game.get("GAME_STATUS_TEXT", "Unknown")
+                game_status = game.get("GAME_STATUS_ID", "Unknown")
 
                 # Get team names
                 home_team = self._get_team_name(home_team_id)
@@ -211,7 +211,7 @@ class NBADataScraper:
 
     def get_box_score(self, game_id: str) -> list[dict]:
         """
-        Get box score for a specific game.
+        Get box score for a specific game using CDN endpoint.
 
         Args:
             game_id: NBA game ID.
@@ -219,54 +219,69 @@ class NBADataScraper:
         Returns:
             List of player stat dictionaries.
         """
-        params = {
-            'GameID': game_id,
-            'StartPeriod': 1,
-            'EndPeriod': 10,
-            'StartRange': 0,
-            'EndRange': 0,
-            'RangeType': 0,
-        }
-
-        data = self._make_request('boxscoretraditionalv2', params)
-        if not data:
-            print(f"Error: No data returned from boxscoretraditionalv2 for game {game_id}")
-            return []
+        cdn_url = f"https://cdn.nba.com/static/json/liveData/boxscore/boxscore_{game_id}.json"
 
         try:
-            player_stats_rs = self._get_result_set(data, 'PlayerStats')
-            if not player_stats_rs:
-                print(f"Error: No PlayerStats in response for game {game_id}")
-                return []
+            cdn_headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'application/json',
+                'Referer': 'https://www.nba.com/',
+            }
+            response = requests.get(cdn_url, headers=cdn_headers, timeout=60)
+            response.raise_for_status()
+            data = response.json()
 
-            players_data = parse_nba_response(player_stats_rs)
-
-            # Debug output
-            print(f"    DEBUG: Box score returned {len(players_data)} players")
-            if players_data:
-                print(f"    DEBUG: First player sample: {players_data[0]}")
+            game = data.get('game', {})
+            home_team = game.get('homeTeam', {})
+            away_team = game.get('awayTeam', {})
 
             player_stats = []
-            for player in players_data:
-                stats = {
-                    "player_id": player.get("PLAYER_ID"),
-                    "player_name": player.get("PLAYER_NAME"),
-                    "team_id": player.get("TEAM_ID"),
-                    "team_abbreviation": player.get("TEAM_ABBREVIATION"),
-                    "min": player.get("MIN"),
-                    "fgm": player.get("FGM", 0) or 0,
-                    "fga": player.get("FGA", 0) or 0,
-                    "pts": player.get("PTS", 0) or 0,
-                    "reb": player.get("REB", 0) or 0,
-                    "ast": player.get("AST", 0) or 0,
-                    "stl": player.get("STL", 0) or 0,
-                    "blk": player.get("BLK", 0) or 0,
-                }
-                player_stats.append(stats)
 
+            # Process home team players
+            for player in home_team.get('players', []):
+                stats = player.get('statistics', {})
+                if not stats:
+                    continue
+                player_stats.append({
+                    "player_id": player.get("personId"),
+                    "player_name": player.get("name"),
+                    "team_id": home_team.get("teamId"),
+                    "team_abbreviation": home_team.get("teamTricode"),
+                    "min": stats.get("minutes", ""),
+                    "fgm": stats.get("fieldGoalsMade", 0) or 0,
+                    "fga": stats.get("fieldGoalsAttempted", 0) or 0,
+                    "pts": stats.get("points", 0) or 0,
+                    "reb": stats.get("reboundsTotal", 0) or 0,
+                    "ast": stats.get("assists", 0) or 0,
+                    "stl": stats.get("steals", 0) or 0,
+                    "blk": stats.get("blocks", 0) or 0,
+                })
+
+            # Process away team players
+            for player in away_team.get('players', []):
+                stats = player.get('statistics', {})
+                if not stats:
+                    continue
+                player_stats.append({
+                    "player_id": player.get("personId"),
+                    "player_name": player.get("name"),
+                    "team_id": away_team.get("teamId"),
+                    "team_abbreviation": away_team.get("teamTricode"),
+                    "min": stats.get("minutes", ""),
+                    "fgm": stats.get("fieldGoalsMade", 0) or 0,
+                    "fga": stats.get("fieldGoalsAttempted", 0) or 0,
+                    "pts": stats.get("points", 0) or 0,
+                    "reb": stats.get("reboundsTotal", 0) or 0,
+                    "ast": stats.get("assists", 0) or 0,
+                    "stl": stats.get("steals", 0) or 0,
+                    "blk": stats.get("blocks", 0) or 0,
+                })
+
+            print(f"    Box score: {len(player_stats)} players from CDN")
             return player_stats
+
         except Exception as e:
-            print(f"Error fetching box score for game {game_id}: {e}")
+            print(f"Error fetching box score from CDN for game {game_id}: {e}")
             return []
 
     def get_play_by_play(self, game_id: str) -> list[dict]:
@@ -626,11 +641,6 @@ def get_highlight_players(game_id: str, scraper: NBADataScraper, algorithm_func)
     """
     box_score = scraper.get_box_score(game_id)
     highlight_players = []
-
-    # Debug: print box score count
-    print(f"  DEBUG: Box score returned {len(box_score)} players")
-    if box_score:
-        print(f"  DEBUG: First player sample: {box_score[0]}")
 
     for player in box_score:
         # Skip players with no minutes
