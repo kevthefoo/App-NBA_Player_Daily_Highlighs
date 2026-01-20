@@ -8,6 +8,7 @@ __pycache__/
 
 /**/*.spec
 /**/dist
+.claude/
 
 test.py/
 *test.py
@@ -15,3 +16,7 @@ test.py
 /test.py
 
 .env
+
+# YouTube API credentials
+client_secrets.json
+token.pickle
