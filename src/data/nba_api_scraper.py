@@ -10,6 +10,11 @@ import requests
 from datetime import datetime
 from typing import Optional
 
+from src.logger import get_logger, log_exception
+
+# Initialize logger for this module
+logger = get_logger("nba_api")
+
 
 # Team ID to name/abbreviation mapping
 TEAM_ID_MAP = {
@@ -112,22 +117,22 @@ class NBADataScraper:
                 # Longer timeout and add delay between retries
                 if attempt > 0:
                     wait_time = 2 ** attempt  # Exponential backoff: 2, 4, 8 seconds
-                    print(f"  Retry {attempt}/{max_retries} for {endpoint} in {wait_time}s...")
+                    logger.debug(f"Retry {attempt}/{max_retries} for {endpoint} in {wait_time}s...")
                     time.sleep(wait_time)
 
                 response = self.session.get(url, params=params, timeout=60)
                 response.raise_for_status()
                 return response.json()
             except requests.exceptions.Timeout as e:
-                print(f"Timeout for {endpoint} (attempt {attempt + 1}/{max_retries})")
+                logger.warning(f"Timeout for {endpoint} (attempt {attempt + 1}/{max_retries})")
                 if attempt == max_retries - 1:
-                    print(f"Request error for {endpoint}: {e}")
+                    logger.error(f"Request error for {endpoint}: {e}")
                     return None
             except requests.exceptions.RequestException as e:
-                print(f"Request error for {endpoint}: {e}")
+                logger.error(f"Request error for {endpoint}: {e}")
                 return None
             except json.JSONDecodeError as e:
-                print(f"JSON decode error for {endpoint}: {e}")
+                logger.error(f"JSON decode error for {endpoint}: {e}")
                 return None
 
         return None
@@ -166,13 +171,13 @@ class NBADataScraper:
 
         data = self._make_request('scoreboardv2', params)
         if not data:
-            print(f"Error: No data returned from scoreboardv2")
+            logger.error("No data returned from scoreboardv2")
             return []
 
         try:
             game_header = self._get_result_set(data, 'GameHeader')
             if not game_header:
-                print(f"Error: No GameHeader in response")
+                logger.error("No GameHeader in response")
                 return []
 
             games_data = parse_nba_response(game_header)
@@ -199,7 +204,7 @@ class NBADataScraper:
 
             return games
         except Exception as e:
-            print(f"Error parsing games: {e}")
+            log_exception(logger, "Error parsing games", e)
             return []
 
     def _get_team_name(self, team_id: int) -> str:
@@ -277,11 +282,11 @@ class NBADataScraper:
                     "blk": stats.get("blocks", 0) or 0,
                 })
 
-            print(f"    Box score: {len(player_stats)} players from CDN")
+            logger.debug(f"Box score: {len(player_stats)} players from CDN")
             return player_stats
 
         except Exception as e:
-            print(f"Error fetching box score from CDN for game {game_id}: {e}")
+            log_exception(logger, f"Error fetching box score from CDN for game {game_id}", e)
             return []
 
     def get_play_by_play(self, game_id: str) -> list[dict]:
@@ -309,7 +314,7 @@ class NBADataScraper:
 
             actions = data.get('game', {}).get('actions', [])
             if not actions:
-                print(f"Error: No actions in CDN response for game {game_id}")
+                logger.warning(f"No actions in CDN response for game {game_id}")
                 return []
 
             plays = []
@@ -345,7 +350,7 @@ class NBADataScraper:
 
             return plays
         except Exception as e:
-            print(f"Error fetching play-by-play from CDN for game {game_id}: {e}")
+            log_exception(logger, f"Error fetching play-by-play from CDN for game {game_id}", e)
             return []
 
     def _parse_clock_time(self, clock: str) -> str:
@@ -391,7 +396,7 @@ class NBADataScraper:
             try:
                 if attempt > 0:
                     wait_time = 3 * (attempt + 1)  # 6, 9 seconds for retries
-                    print(f"    Retry {attempt}/{max_retries} for video in {wait_time}s...")
+                    logger.debug(f"Retry {attempt}/{max_retries} for video in {wait_time}s...")
                     time.sleep(wait_time)
 
                 response = self.session.get(url, params=params, timeout=60)
@@ -411,17 +416,17 @@ class NBADataScraper:
                 return None
 
             except requests.exceptions.Timeout:
-                print(f"    Timeout fetching video (attempt {attempt + 1}/{max_retries})")
+                logger.warning(f"Timeout fetching video (attempt {attempt + 1}/{max_retries})")
                 if attempt == max_retries - 1:
                     return None
             except requests.exceptions.ConnectionError as e:
-                print(f"    Connection error (attempt {attempt + 1}/{max_retries}): {e}")
+                logger.warning(f"Connection error (attempt {attempt + 1}/{max_retries}): {e}")
                 if attempt == max_retries - 1:
                     return None
                 # Wait longer on connection errors (likely rate limiting)
                 time.sleep(5 * (attempt + 1))
             except Exception as e:
-                print(f"    Error fetching video for event {event_id}: {e}")
+                logger.error(f"Error fetching video for event {event_id}: {e}")
                 return None
 
         return None
@@ -540,10 +545,10 @@ class NBADataScraper:
                     f.write(response.content)
                 return True
             else:
-                print(f"Failed to download video: HTTP {response.status_code}")
+                logger.error(f"Failed to download video: HTTP {response.status_code}")
                 return False
         except Exception as e:
-            print(f"Error downloading video: {e}")
+            log_exception(logger, "Error downloading video", e)
             return False
 
     def download_player_highlights(
@@ -596,18 +601,18 @@ class NBADataScraper:
                 continue
 
             # Get video URL
-            print(f"  Fetching video for {category.upper()}: {event.get('description', '')[:50]}...")
+            logger.debug(f"Fetching video for {category.upper()}: {event.get('description', '')[:50]}...")
             video_url = self.get_video_url(game_id, event_id)
 
             if video_url:
                 if self.download_video(video_url, filepath):
                     stats[category] = stats.get(category, 0) + 1
-                    print(f"    Downloaded: {timestamp}.mp4")
+                    logger.debug(f"Downloaded: {timestamp}.mp4")
                 else:
                     stats["failed"] += 1
             else:
                 stats["failed"] += 1
-                print(f"    No video available for event {event_id}")
+                logger.warning(f"No video available for event {event_id}")
 
             # Rate limiting to avoid API throttling (2 seconds between requests)
             time.sleep(2)

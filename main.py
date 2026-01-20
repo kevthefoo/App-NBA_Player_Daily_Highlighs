@@ -14,17 +14,14 @@ from datetime import datetime, timedelta
 from pytz import timezone
 from dotenv import load_dotenv
 
+from src.logger import get_logger, log_exception
+
+# Initialize logger for this module
+logger = get_logger("main")
+
 # Fix Windows console encoding for Unicode characters
 if sys.platform == 'win32':
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
-
-
-def safe_print(text: str) -> None:
-    """Print text with safe Unicode handling for Windows console."""
-    try:
-        print(text)
-    except UnicodeEncodeError:
-        print(text.encode('ascii', 'replace').decode('ascii'))
 
 from src.data.nba_api_scraper import NBADataScraper, get_highlight_players
 from src import config
@@ -76,10 +73,10 @@ def process_player(
     player_name = player["player_name"]
     player_id = player["player_id"]
 
-    print(f"\n{'='*60}")
-    print(f"Processing: {player_name}")
-    print(f"Stats: {player['pts']} PTS / {player['reb']} REB / {player['ast']} AST")
-    print(f"{'='*60}")
+    logger.info("=" * 60)
+    logger.info(f"Processing: {player_name}")
+    logger.info(f"Stats: {player['pts']} PTS / {player['reb']} REB / {player['ast']} AST")
+    logger.info("=" * 60)
 
     # Create player directories
     player_path = f"{build_path}/{game_date}/{player_name}"
@@ -88,7 +85,7 @@ def process_player(
     start_time = time.time()
 
     # Download highlight clips
-    print("\nDownloading highlight clips...")
+    logger.info("Downloading highlight clips...")
     download_stats = scraper.download_player_highlights(
         game_id=game_info["game_id"],
         player_id=player_id,
@@ -100,22 +97,22 @@ def process_player(
         blk_count=player["blk"],
     )
 
-    print(f"\nDownload complete: FGM={download_stats['fgm']}, AST={download_stats['ast']}, BLK={download_stats['blk']}, Failed={download_stats['failed']}")
+    logger.info(f"Download complete: FGM={download_stats['fgm']}, AST={download_stats['ast']}, BLK={download_stats['blk']}, Failed={download_stats['failed']}")
 
     # Check if we have any clips
     clips_path = f"{player_path}/clips"
     clip_files = [f for f in os.listdir(clips_path) if f.endswith(".mp4")]
 
     if not clip_files:
-        print(f"No clips downloaded for {player_name}, skipping...")
+        logger.warning(f"No clips downloaded for {player_name}, skipping...")
         return
 
     # Create highlight video
-    print("\nCreating highlight video...")
+    logger.info("Creating highlight video...")
     hm.highlight_maker(player_name, game_date, assets_path, build_path)
 
     # Create thumbnail
-    print("\nCreating thumbnail...")
+    logger.info("Creating thumbnail...")
     make_thumbnail(
         player_name=player_name,
         player_id=player_id,
@@ -131,7 +128,7 @@ def process_player(
     )
 
     # Upload to YouTube
-    print("\nUploading to YouTube...")
+    logger.info("Uploading to YouTube...")
     yt_title = f"NBA - {player_name} Highlights - {game_info['away_team']} vs {game_info['home_team']} - {game_date_readable}"
 
     uploader.upload_video(
@@ -155,7 +152,7 @@ def process_player(
         f.write(f"Processing time: {int(end_time - start_time)} seconds\n")
         f.write(f"Clips downloaded: FGM={download_stats['fgm']}, AST={download_stats['ast']}, BLK={download_stats['blk']}\n")
 
-    print(f"\nCompleted {player_name} in {int(end_time - start_time)} seconds")
+    logger.info(f"Completed {player_name} in {int(end_time - start_time)} seconds")
 
 
 def main():
@@ -187,9 +184,9 @@ def main():
     game_date = target_date.strftime("%m%d%Y")
     game_date_readable = target_date.strftime("%m/%d/%Y")
 
-    print(f"NBA Player Daily Highlights")
-    print(f"Date: {game_date_readable}")
-    print(f"{'='*60}\n")
+    logger.info("NBA Player Daily Highlights")
+    logger.info(f"Date: {game_date_readable}")
+    logger.info("=" * 60)
 
     # Setup directories
     setup_directories(build_path, game_date)
@@ -198,37 +195,37 @@ def main():
     scraper = NBADataScraper(game_date=today_date)
     hm = Highlight_Make()
     uploader = YouTubeUploader()
-    print("Authenticating with YouTube API...")
+    logger.info("Authenticating with YouTube API...")
     uploader.authenticate()
 
     # Get today's games
-    print("\nFetching today's games...")
+    logger.info("Fetching today's games...")
     games = scraper.get_games()
 
     if not games:
-        print("No games found for today.")
+        logger.warning("No games found for today.")
         return
 
-    print(f"Found {len(games)} games\n")
+    logger.info(f"Found {len(games)} games")
 
     # Get completed players
     completed_players = get_completed_players(build_path, game_date)
 
     # Process each game
     for game in games:
-        print(f"\n{'='*60}")
-        print(f"Game: {game['away_team']} @ {game['home_team']}")
-        print(f"Game ID: {game['game_id']} | Status ID: {game.get('status', 'Unknown')}")
-        print(f"{'='*60}")
+        logger.info("=" * 60)
+        logger.info(f"Game: {game['away_team']} @ {game['home_team']}")
+        logger.info(f"Game ID: {game['game_id']} | Status ID: {game.get('status', 'Unknown')}")
+        logger.info("=" * 60)
 
         # Skip games that haven't finished yet
         game_status = game.get('status', '')
-        if game_status !=3:
-            print(f"Skipping - game not finished yet (status: {game.get('status', 'Unknown')})")
+        if game_status != 3:
+            logger.info(f"Skipping - game not finished yet (status: {game.get('status', 'Unknown')})")
             continue
 
         # Get players who qualify for highlights
-        print("\nFetching box score...")
+        logger.info("Fetching box score...")
         highlight_players = get_highlight_players(
             game_id=game["game_id"],
             scraper=scraper,
@@ -236,18 +233,18 @@ def main():
         )
 
         if not highlight_players:
-            print("No players qualify for highlights in this game.")
+            logger.info("No players qualify for highlights in this game.")
             continue
 
-        print(f"\nFound {len(highlight_players)} players qualifying for highlights:")
+        logger.info(f"Found {len(highlight_players)} players qualifying for highlights:")
         for p in highlight_players:
             status = "(already done)" if p["player_name"] in completed_players else ""
-            print(f"  - {p['player_name']}: {p['pts']} PTS / {p['reb']} REB / {p['ast']} AST {status}")
+            logger.info(f"  - {p['player_name']}: {p['pts']} PTS / {p['reb']} REB / {p['ast']} AST {status}")
 
         # Process each qualifying player
         for player in highlight_players:
             if player["player_name"] in completed_players:
-                print(f"\nSkipping {player['player_name']} (already processed)")
+                logger.info(f"Skipping {player['player_name']} (already processed)")
                 continue
 
             try:
@@ -264,12 +261,12 @@ def main():
                 )
                 mark_player_completed(build_path, game_date, player["player_name"])
             except Exception as e:
-                print(f"\nError processing {player['player_name']}: {e}")
+                log_exception(logger, f"Error processing {player['player_name']}", e)
                 continue
 
-    print(f"\n{'='*60}")
-    print("All tasks completed!")
-    print(f"{'='*60}")
+    logger.info("=" * 60)
+    logger.info("All tasks completed!")
+    logger.info("=" * 60)
 
 
 if __name__ == "__main__":
