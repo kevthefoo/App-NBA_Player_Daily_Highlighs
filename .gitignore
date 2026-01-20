@@ -20,3 +20,6 @@ test.py
 # YouTube API credentials
 client_secrets.json
 token.pickle
+
+# Video files
+*.mp4
