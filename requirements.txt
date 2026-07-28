@@ -1,5 +1,5 @@
 lxml==6.0.2
-Pillow==11.3.0
+Pillow==12.3.0
 moviepy==2.2.1
 beautifulsoup4==4.14.3
 pytz==2025.2
